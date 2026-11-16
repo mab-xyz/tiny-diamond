@@ -1,6 +1,6 @@
 # TinyDiamond: Minimal Selector Proxy for Smart Contracts
 
-TinyDiamond is a minimalistic implementation of the Diamond Pattern (EIP-2535). It provides selector-based routing with access control in a lightweight, gas-efficient package.
+TinyDiamond is a minimalistic implementation of the Diamond Pattern (EIP-2535). It provides selector-based routing with access control in a lightweight package.
 
 Author: Martin Monperrus - mab.xyz
 
@@ -234,13 +234,11 @@ TinyDiamond implements the core concept of EIP-2535 and keeps the rest in option
 | Introspection (`IDiamondLoupe`) | Optional facet | ✅ |
 | `DiamondCut` event | ✅ | ✅ |
 | Per-selector access control | ✅ | ❌ |
-| Gas cost per call | Lower | Higher |
 
 With `DiamondLoupeFacet` and `DiamondCutFacet` installed, TinyDiamond provides every interface EIP-2535 asks for.
 
 When to Use TinyDiamond:
 
-- You want minimal gas overhead
 - You want per-function access control
 - You prefer simplicity
 - You're prototyping or learning the pattern
