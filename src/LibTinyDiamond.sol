@@ -71,6 +71,10 @@ library LibTinyDiamond {
         return false;
     }
 
+    function emitDiamondCut(IDiamond.FacetCut[] memory cuts, address init, bytes memory data) internal {
+        emit DiamondCut(cuts, init, data);
+    }
+
     /// @notice EIP-2535: immutable functions are emitted as added, with the diamond as facet
     function emitBuiltins() internal {
         IDiamond.FacetCut[] memory cut = new IDiamond.FacetCut[](1);
@@ -78,20 +82,33 @@ library LibTinyDiamond {
         emit DiamondCut(cut, address(0), "");
     }
 
-    /// @notice Routes `selector` to `target` (address(0) removes it) and emits `DiamondCut`; silent if unchanged
-    function cut(bytes4 selector, address target) internal {
+    // keccak256("eip1967.proxy.admin") - 1, where TinyDiamond keeps its admin
+    bytes32 internal constant ADMIN_SLOT = 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103;
+
+    function admin() internal view returns (address adm) {
+        bytes32 slot = ADMIN_SLOT;
+        assembly {
+            adm := sload(slot)
+        }
+    }
+
+    /// @notice Routes `selector` to `target` (address(0) removes it), without event.
+    /// Reverts for immutable selectors; a no-op when `target` is already the facet.
+    /// @return changed false when `target` already was the facet
+    /// @return action what happened, meaningful only when `changed`
+    function route(bytes4 selector, address target) internal returns (bool changed, IDiamond.FacetCutAction action) {
         require(!isBuiltin(selector), "TinyDiamond: immutable function");
         Layout storage l = layout();
         FacetAndPosition memory old = l.facetOf[selector];
-        if (old.facet == target) return; // no change, no event
+        if (old.facet == target) return (false, action);
 
-        IDiamond.FacetCutAction action;
         if (old.facet == address(0)) {
             // Add: append, position stored in the same slot as the facet
             l.selectors.push(selector);
             l.facetOf[selector] = FacetAndPosition(target, uint96(l.selectors.length));
-            action = IDiamond.FacetCutAction.Add;
-        } else if (target == address(0)) {
+            return (true, IDiamond.FacetCutAction.Add);
+        }
+        if (target == address(0)) {
             // Remove: swap-and-pop keeps `selectors` dense
             uint256 index = old.position - 1;
             uint256 lastIndex = l.selectors.length - 1;
@@ -102,11 +119,16 @@ library LibTinyDiamond {
             }
             l.selectors.pop();
             delete l.facetOf[selector];
-            action = IDiamond.FacetCutAction.Remove;
-        } else {
-            l.facetOf[selector].facet = target;
-            action = IDiamond.FacetCutAction.Replace;
+            return (true, IDiamond.FacetCutAction.Remove);
         }
+        l.facetOf[selector].facet = target;
+        return (true, IDiamond.FacetCutAction.Replace);
+    }
+
+    /// @notice Routes `selector` to `target` (address(0) removes it) and emits `DiamondCut`; silent if unchanged
+    function cut(bytes4 selector, address target) internal {
+        (bool changed, IDiamond.FacetCutAction action) = route(selector, target);
+        if (!changed) return; // no change, no event
 
         bytes4[] memory selectors = new bytes4[](1);
         selectors[0] = selector;

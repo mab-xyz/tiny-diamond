@@ -115,7 +115,13 @@ contract DiamondLoupeFacet is IDiamondLoupe, IERC165 {
         return LibTinyDiamond.layout().facetOf[_functionSelector].facet;
     }
 
-    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
-        return interfaceId == type(IERC165).interfaceId || interfaceId == type(IDiamondLoupe).interfaceId;
+    /// @notice ERC-165, IDiamondLoupe, and IDiamondCut (its id is `diamondCut.selector`) while that function is routed
+    function supportsInterface(bytes4 interfaceId) external view returns (bool) {
+        if (interfaceId == type(IERC165).interfaceId || interfaceId == type(IDiamondLoupe).interfaceId) return true;
+        return interfaceId == DIAMOND_CUT_SELECTOR
+            && LibTinyDiamond.layout().facetOf[DIAMOND_CUT_SELECTOR].facet != address(0);
     }
+
+    // bytes4(keccak256("diamondCut((address,uint8,bytes4[])[],address,bytes)"))
+    bytes4 private constant DIAMOND_CUT_SELECTOR = 0x1f931c1c;
 }

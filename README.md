@@ -136,17 +136,39 @@ The diamond keeps the routed selectors in an array (swap-and-pop on removal, pos
 same slot as the facet address), so the loupe can enumerate them whether or not it is installed;
 the `fallback` path still reads a single routing slot.
 
+### Optional Batch Upgrades (`diamondCut`)
+
+`DiamondCutFacet` implements EIP-2535 `IDiamondCut`. It is optional: deploy it once and route its selector.
+
+```solidity
+DiamondCutFacet cutFacet = new DiamondCutFacet();
+diamond.sharpCut(IDiamondCut.diamondCut.selector, address(cutFacet));
+
+IDiamond.FacetCut[] memory cut = new IDiamond.FacetCut[](2);
+cut[0] = IDiamond.FacetCut(address(facet1), IDiamond.FacetCutAction.Add, facet1Selectors);
+cut[1] = IDiamond.FacetCut(address(0), IDiamond.FacetCutAction.Remove, oldSelectors);
+IDiamondCut(address(diamond)).diamondCut(cut, address(init), abi.encodeCall(MyInit.init, ()));
+```
+
+- The batch is atomic and recorded in a single `DiamondCut` event; then `_calldata` runs with `delegatecall`
+  on `_init` (skipped when `_init` is `address(0)`), and a revert there undoes the whole batch.
+- EIP-2535 checks: `Add` reverts if the selector is mapped, `Replace` if it is unset or already on that facet,
+  `Remove` if it is unset; `Add`/`Replace` need a non-zero facet, `Remove` needs `address(0)`.
+  Built-in selectors revert as with `sharpCut`.
+- Only the admin (or the diamond itself) may call it, like `sharpCut`; `restrict` can narrow it further.
+- While it is routed, the loupe's `supportsInterface` also reports `IDiamondCut` (`0x1f931c1c`).
+
 ## Storage Layout
 
 Routing state lives in an [ERC-7201](https://eips.ethereum.org/EIPS/eip-7201) namespaced struct
 (`LibTinyDiamond.Layout`, namespace `tinydiamond.storage`, slot
-`0x0abc81caac83e1656ee495fd84f3fd0c2020c41999d182a4a81694a75a694700`), shared by the core and the loupe facet.
+`0x0abc81caac83e1656ee495fd84f3fd0c2020c41999d182a4a81694a75a694700`), shared by the core and the optional facets.
 Facets with ordinary state variables (slots 0, 1, 2, ...) therefore cannot corrupt the routing table.
 The admin stays in the EIP-1967 admin slot.
 
 ## Access Control
 
-The contract deployer is automatically set as admin using the EIP-1967 admin slot. Only the admin can call `sharpCut()` and `restrict()`.
+The contract deployer is automatically set as admin using the EIP-1967 admin slot. Only the admin can call `sharpCut()`, `restrict()` and, if installed, `diamondCut()`.
 
 ### Function-Level Restrictions
 
@@ -201,18 +223,20 @@ Be aware of potential selector collisions:
 
 ## Comparison with EIP-2535
 
-TinyDiamond implements the core concept of EIP-2535 but omits several features for simplicity:
+TinyDiamond implements the core concept of EIP-2535 and keeps the rest in optional facets:
 
 | Feature | TinyDiamond | Full EIP-2535 |
 |---------|-------------|---------------|
 | Selector routing | ✅ | ✅ |
 | `delegatecall` to facets | ✅ | ✅ |
 | Simple API | ✅ | ❌ |
-| Batch updates (`diamondCut`) | ❌ | ✅ |
+| Batch updates (`diamondCut`) | Optional facet | ✅ |
 | Introspection (`IDiamondLoupe`) | Optional facet | ✅ |
 | `DiamondCut` event | ✅ | ✅ |
 | Per-selector access control | ✅ | ❌ |
 | Gas cost per call | Lower | Higher |
+
+With `DiamondLoupeFacet` and `DiamondCutFacet` installed, TinyDiamond provides every interface EIP-2535 asks for.
 
 When to Use TinyDiamond:
 
@@ -221,17 +245,15 @@ When to Use TinyDiamond:
 - You prefer simplicity
 - You're prototyping or learning the pattern
 
-When to Use Full EIP-2535:
+When to Use a Full EIP-2535 Implementation:
 
-- You need batch updates with initialization
-- You require full EIP-2535 tooling compatibility
+- You want the reference implementation's conventions and ecosystem rather than TinyDiamond's
 - You're building a complex system with many facets
 
 ## Future Enhancements
 
 Possible sophistications that could be added:
 
-- **Batch Updates**: Support the standard `diamondCut(FacetCut[] calldata _diamondCut, address _init, bytes calldata _calldata)` method
 - **Immutability**: Support sealing to prevent further modifications
 - **Gas Limits**: Per-selector gas budgets
 - **Storage Isolation**: Patterns to prevent collisions between facets' own state (the routing state is already isolated)
