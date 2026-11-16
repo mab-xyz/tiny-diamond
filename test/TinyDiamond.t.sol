@@ -3,9 +3,10 @@ pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
 import "../src/TinyDiamond.sol";
+import "../src/LibTinyDiamond.sol";
 import "./TestFacets.sol";
 
-contract TinyDiamondTest is Test {
+contract TinyDiamondTest is Test, IDiamond {
     TinyDiamond public diamond;
     TestFacet1 public facet1;
     TestFacet2 public facet2;
@@ -15,8 +16,12 @@ contract TinyDiamondTest is Test {
     address public admin;
     address public user;
 
-    event SelectorMappingUpdated(bytes4 indexed selector, address indexed oldTarget, address indexed newTarget);
-    event AdminChanged(address indexed oldAdmin, address indexed newAdmin);
+    function _cut(address facet, FacetCutAction action, bytes4 selector) internal pure returns (FacetCut[] memory cut) {
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = selector;
+        cut = new FacetCut[](1);
+        cut[0] = FacetCut(facet, action, selectors);
+    }
 
     function setUp() public {
         admin = address(this);
@@ -49,7 +54,7 @@ contract TinyDiamondTest is Test {
         bytes4 selector = TestFacet1.function1.selector;
 
         vm.expectEmit(true, true, true, true);
-        emit SelectorMappingUpdated(selector, address(0), address(facet1));
+        emit DiamondCut(_cut(address(facet1), FacetCutAction.Add, selector), address(0), "");
 
         diamond.sharpCut(selector, address(facet1));
 
@@ -65,7 +70,7 @@ contract TinyDiamondTest is Test {
 
         // Then update
         vm.expectEmit(true, true, true, true);
-        emit SelectorMappingUpdated(selector, address(facet1), address(facet3));
+        emit DiamondCut(_cut(address(facet3), FacetCutAction.Replace, selector), address(0), "");
 
         diamond.sharpCut(selector, address(facet3));
 
@@ -80,7 +85,7 @@ contract TinyDiamondTest is Test {
 
         // Then remove by setting to address(0)
         vm.expectEmit(true, true, true, true);
-        emit SelectorMappingUpdated(selector, address(facet1), address(0));
+        emit DiamondCut(_cut(address(0), FacetCutAction.Remove, selector), address(0), "");
 
         diamond.sharpCut(selector, address(0));
 
@@ -479,6 +484,7 @@ contract TinyDiamondTest is Test {
 
     function testFuzz_SharpCut_ArbitrarySelectors(bytes4 selector, address target) public {
         vm.assume(target != address(0)); // Avoid testing removal in this fuzz test
+        vm.assume(!LibTinyDiamond.isBuiltin(selector));
 
         diamond.sharpCut(selector, target);
         assertEq(diamond.selectorToFacet(selector), target);

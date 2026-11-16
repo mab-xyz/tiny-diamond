@@ -26,8 +26,8 @@ TinyDiamond implements the core Diamond principle—the essence, nothing more.
 ## Installation
 
 ```bash
-# Using Foundry
-forge install
+# Using Foundry (forge-std is a git submodule)
+git submodule update --init
 
 # Run tests
 forge test
@@ -53,6 +53,23 @@ interface ITinyDiamond {
      */
     function restrict(bytes4 selector, address target) external;
 }
+```
+
+### Built-in (immutable) functions
+
+`sharpCut`, `restrict`, `admin`, `getTarget`, `selectorToFacet` and `selectorRestriction` are compiled into
+the diamond and always win over the fallback. `sharpCut` and `restrict` revert with
+`TinyDiamond: immutable function` for these selectors.
+
+### Events
+
+Every selector change emits the standard EIP-2535 `DiamondCut` event, with one `FacetCut` holding the
+selector: `Add` (unset → facet), `Replace` (facet → other facet) or `Remove` (facet → unset, facet address 0).
+A cut that changes nothing emits nothing. The constructor emits the built-in selectors as `Add` with the
+diamond's own address as facet.
+
+```solidity
+event DiamondCut(FacetCut[] _diamondCut, address _init, bytes _calldata);
 ```
 
 ## Usage
@@ -97,6 +114,35 @@ diamond.sharpCut(MyFacet.myFunction.selector, address(0));
 
 // Calls to this function will now revert
 ```
+
+### Optional Loupe (Introspection)
+
+`DiamondLoupeFacet` implements EIP-2535 `IDiamondLoupe` and ERC-165 `supportsInterface`. It is optional:
+deploy it once and route its five selectors.
+
+```solidity
+DiamondLoupeFacet loupeFacet = new DiamondLoupeFacet();
+diamond.sharpCut(IDiamondLoupe.facets.selector, address(loupeFacet));
+diamond.sharpCut(IDiamondLoupe.facetFunctionSelectors.selector, address(loupeFacet));
+diamond.sharpCut(IDiamondLoupe.facetAddresses.selector, address(loupeFacet));
+diamond.sharpCut(IDiamondLoupe.facetAddress.selector, address(loupeFacet));
+diamond.sharpCut(IERC165.supportsInterface.selector, address(loupeFacet));
+
+IDiamondLoupe.Facet[] memory all = IDiamondLoupe(address(diamond)).facets();
+// all[0] is the diamond itself with its built-in selectors
+```
+
+The diamond keeps the routed selectors in an array (swap-and-pop on removal, position packed in the
+same slot as the facet address), so the loupe can enumerate them whether or not it is installed;
+the `fallback` path still reads a single routing slot.
+
+## Storage Layout
+
+Routing state lives in an [ERC-7201](https://eips.ethereum.org/EIPS/eip-7201) namespaced struct
+(`LibTinyDiamond.Layout`, namespace `tinydiamond.storage`, slot
+`0x0abc81caac83e1656ee495fd84f3fd0c2020c41999d182a4a81694a75a694700`), shared by the core and the loupe facet.
+Facets with ordinary state variables (slots 0, 1, 2, ...) therefore cannot corrupt the routing table.
+The admin stays in the EIP-1967 admin slot.
 
 ## Access Control
 
@@ -151,7 +197,7 @@ Be aware of potential selector collisions:
 
 - Different function signatures can produce the same 4-byte selector (rare but possible)
 - Always verify selectors before adding them
-- Use `getTarget()` to check current mappings
+- Use `getTarget()` (or the loupe's `facetAddress()`) to check current mappings
 
 ## Comparison with EIP-2535
 
@@ -163,7 +209,8 @@ TinyDiamond implements the core concept of EIP-2535 but omits several features f
 | `delegatecall` to facets | ✅ | ✅ |
 | Simple API | ✅ | ❌ |
 | Batch updates (`diamondCut`) | ❌ | ✅ |
-| Introspection (`IDiamondLoupe`) | ❌ | ✅ |
+| Introspection (`IDiamondLoupe`) | Optional facet | ✅ |
+| `DiamondCut` event | ✅ | ✅ |
 | Per-selector access control | ✅ | ❌ |
 | Gas cost per call | Lower | Higher |
 
@@ -177,7 +224,6 @@ When to Use TinyDiamond:
 When to Use Full EIP-2535:
 
 - You need batch updates with initialization
-- You want standardized introspection
 - You require full EIP-2535 tooling compatibility
 - You're building a complex system with many facets
 
@@ -186,11 +232,9 @@ When to Use Full EIP-2535:
 Possible sophistications that could be added:
 
 - **Batch Updates**: Support the standard `diamondCut(FacetCut[] calldata _diamondCut, address _init, bytes calldata _calldata)` method
-- **Introspection**: Implement `IDiamondLoupe` for querying facets and functions
 - **Immutability**: Support sealing to prevent further modifications
 - **Gas Limits**: Per-selector gas budgets
-- **Events**: Enhanced event emission for better off-chain tracking
-- **Storage Isolation**: Patterns to prevent facet storage collisions
+- **Storage Isolation**: Patterns to prevent collisions between facets' own state (the routing state is already isolated)
 
 ## License
 

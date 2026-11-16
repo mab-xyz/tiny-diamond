@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+import {LibTinyDiamond} from "./LibTinyDiamond.sol";
+
 interface ITinyDiamond {
     /**
      * @notice Set or update the target contract for a specific selector
@@ -24,20 +26,21 @@ interface ITinyDiamond {
  * based on function selectors (first 4 bytes of calldata)
  */
 contract TinyDiamond is ITinyDiamond {
-    event SelectorMappingUpdated(bytes4 indexed selector, address indexed oldTarget, address indexed newTarget);
+    // Routing state lives in LibTinyDiamond's ERC-7201 slot, readable by the optional loupe facet
+    function selectorToFacet(bytes4 selector) external view returns (address) {
+        return LibTinyDiamond.layout().facetOf[selector].facet;
+    }
 
-    // Mapping from function selector to target contract address
-    mapping(bytes4 => address) public selectorToFacet;
-    mapping(bytes4 => address) public selectorRestriction;
-        
+    function selectorRestriction(bytes4 selector) external view returns (address) {
+        return LibTinyDiamond.layout().restriction[selector];
+    }
+
     function sharpCut(bytes4 selector, address target) external onlyAdmin {
-        address oldTarget = selectorToFacet[selector];
-        selectorToFacet[selector] = target;
-        emit SelectorMappingUpdated(selector, oldTarget, target);
+        LibTinyDiamond.cut(selector, target);
     }
 
     function restrict(bytes4 selector, address target) external  onlyAdmin {
-        selectorRestriction[selector] = target;
+        LibTinyDiamond.restrict(selector, target);
     }
 
     modifier onlyAdmin() {
@@ -62,6 +65,7 @@ contract TinyDiamond is ITinyDiamond {
         assembly {
             sstore(slot, caller())
         }
+        LibTinyDiamond.emitBuiltins();
     }
     
     /**
@@ -70,7 +74,7 @@ contract TinyDiamond is ITinyDiamond {
      * @return target The target contract address
      */
     function getTarget(bytes4 selector) external view returns (address target) {
-        return selectorToFacet[selector];
+        return LibTinyDiamond.layout().facetOf[selector].facet;
     }
     
     /**
@@ -78,12 +82,12 @@ contract TinyDiamond is ITinyDiamond {
      */
     fallback() external payable {
         bytes4 selector = msg.sig;
-        address target = selectorToFacet[selector];
+        address target = LibTinyDiamond.layout().facetOf[selector].facet;
         
         require(target != address(0), "TinyDiamond: selector not found");
         
         // now chcking the possible restriction
-        address restriction = selectorRestriction[selector];
+        address restriction = LibTinyDiamond.layout().restriction[selector];
         require(restriction == address(0) || restriction == msg.sender, "TinyDiamond: caller is not allowed");
 
         // Delegate call to the target contract
